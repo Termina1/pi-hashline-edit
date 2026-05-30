@@ -16,7 +16,7 @@ describe("applyHashlineEdits — error handling", () => {
   it("throws on hash mismatch", () => {
     const content = "aaa\nbbb\nccc";
     const edits: HashlineEdit[] = [
-      { op: "replace", pos: { line: 2, hash: "XX" }, lines: ["BBB"] },
+      { op: "replace", pos: { line: 2, hash: "XXXX" }, lines: ["BBB"] },
     ];
     expect(() => applyHashlineEdits(content, edits)).toThrow(/1 stale anchor\./);
   });
@@ -24,7 +24,7 @@ describe("applyHashlineEdits — error handling", () => {
   it("throws on out-of-range line", () => {
     const content = "aaa\nbbb";
     const edits: HashlineEdit[] = [
-      { op: "replace", pos: { line: 99, hash: "ZZ" }, lines: ["x"] },
+      { op: "replace", pos: { line: 99, hash: "ZZZZ" }, lines: ["x"] },
     ];
     expect(() => applyHashlineEdits(content, edits)).toThrow(/does not exist/);
   });
@@ -45,8 +45,8 @@ describe("applyHashlineEdits — error handling", () => {
   it("reports multiple mismatches at once", () => {
     const content = "aaa\nbbb\nccc";
     const edits: HashlineEdit[] = [
-      { op: "replace", pos: { line: 1, hash: "XX" }, lines: ["A"] },
-      { op: "replace", pos: { line: 3, hash: "YY" }, lines: ["C"] },
+      { op: "replace", pos: { line: 1, hash: "XXXX" }, lines: ["A"] },
+      { op: "replace", pos: { line: 3, hash: "YYYY" }, lines: ["C"] },
     ];
     expect(() => applyHashlineEdits(content, edits)).toThrow(/2 stale anchors\./);
   });
@@ -56,11 +56,11 @@ describe("applyHashlineEdits — error handling", () => {
       applyHashlineEdits("aaa", [
         {
           op: "replace",
-          pos: { line: 1, hash: "ZZ" },
+          pos: { line: 1, hash: "ZZZZ" },
           lines: ["bbb"],
         } as any,
       ]),
-    ).toThrow(/>>> 1#[A-Z]{2}:aaa/);
+    ).toThrow(/>>> 1#[A-Z]{4}:aaa/);
   });
 
   it("retains still-valid range endpoints in retry snippets", () => {
@@ -71,7 +71,7 @@ describe("applyHashlineEdits — error handling", () => {
       applyHashlineEdits(content, [
         {
           op: "replace",
-          pos: { line: 1, hash: "ZZ" },
+          pos: { line: 1, hash: "ZZZZ" },
           end: validEnd,
           lines: ["AAA"],
         },
@@ -305,7 +305,7 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
     const line = 'he said "hi"';
     const content = `${line}\nkeep`;
     const actualHash = computeLineHash(1, line);
-    const arbitraryHash = actualHash === "ZZ" ? "PP" : "ZZ";
+    const arbitraryHash = actualHash === "ZZZZ" ? "PPPP" : "ZZZZ";
     const staleWithHint = `1#${arbitraryHash}:${line}`;
     const toolEdits: HashlineToolEdit[] = [
       { op: "replace", pos: staleWithHint, lines: ["HELLO"] },

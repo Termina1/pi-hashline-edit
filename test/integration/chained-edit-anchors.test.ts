@@ -161,13 +161,13 @@ describe("chained edit anchors", () => {
         ctx,
       );
 
-      // Should have anchors, but none should be an empty sentinel like "3#XX:"
+      // Should have anchors, but none should be an empty sentinel like "3#XXXX:"
       expect(editResult.content[0].text).toContain("--- Anchors");
       const anchorLines = editResult.content[0].text
         .split("\n")
-        .filter((line: string) => line.match(/^\s*\d+#\w{2}:.*/));
+        .filter((line: string) => line.match(/^\s*\d+#\w{4}:.*/));
       for (const line of anchorLines) {
-        expect(line).not.toMatch(/^\s*\d+#\w{2}:$/);
+        expect(line).not.toMatch(/^\s*\d+#\w{4}:$/);
       }
     });
   });

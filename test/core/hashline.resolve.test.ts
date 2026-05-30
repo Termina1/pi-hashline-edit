@@ -4,7 +4,7 @@ import { resolveEditAnchors, type Anchor, type HashlineToolEdit } from "../../sr
 describe("resolveEditAnchors", () => {
   it("resolves replace with pos + end", () => {
     const edits: HashlineToolEdit[] = [
-      { op: "replace", pos: "1#ZZ", end: "3#PP", lines: ["a", "b"] },
+      { op: "replace", pos: "1#ZZZZ", end: "3#PPPP", lines: ["a", "b"] },
     ];
     const resolved = resolveEditAnchors(edits);
     expect(resolved).toHaveLength(1);
@@ -15,7 +15,7 @@ describe("resolveEditAnchors", () => {
 
   it("resolves replace with pos only (single-line)", () => {
     const edits: HashlineToolEdit[] = [
-      { op: "replace", pos: "5#MQ", lines: ["new"] },
+      { op: "replace", pos: "5#MQKT", lines: ["new"] },
     ];
     const resolved = resolveEditAnchors(edits);
     expect(resolved).toHaveLength(1);
@@ -32,7 +32,7 @@ describe("resolveEditAnchors", () => {
 
   it("rejects replace with end only", () => {
     const edits: HashlineToolEdit[] = [
-      { op: "replace", end: "5#MQ", lines: ["new"] },
+      { op: "replace", end: "5#MQKT", lines: ["new"] },
     ];
     expect(() => resolveEditAnchors(edits)).toThrow(/requires a "pos" anchor/i);
   });
@@ -65,14 +65,14 @@ describe("resolveEditAnchors", () => {
 
   it("throws on malformed end for replace with valid pos", () => {
     const edits: HashlineToolEdit[] = [
-      { op: "replace", pos: "5#MQ", end: "garbage", lines: ["x"] },
+      { op: "replace", pos: "5#MQKT", end: "garbage", lines: ["x"] },
     ];
     expect(() => resolveEditAnchors(edits)).toThrow(/Invalid line reference/);
   });
 
   it("resolves append with pos", () => {
     const edits: HashlineToolEdit[] = [
-      { op: "append", pos: "5#MQ", lines: ["new"] },
+      { op: "append", pos: "5#MQKT", lines: ["new"] },
     ];
     const resolved = resolveEditAnchors(edits);
     expect(resolved[0].op).toBe("append");
@@ -88,14 +88,14 @@ describe("resolveEditAnchors", () => {
 
   it("rejects append with end", () => {
     const edits: HashlineToolEdit[] = [
-      { op: "append", end: "5#MQ", lines: ["new"] },
+      { op: "append", end: "5#MQKT", lines: ["new"] },
     ];
     expect(() => resolveEditAnchors(edits)).toThrow(/append does not support "end"/i);
   });
 
   it("resolves prepend with pos", () => {
     const edits: HashlineToolEdit[] = [
-      { op: "prepend", pos: "5#MQ", lines: ["new"] },
+      { op: "prepend", pos: "5#MQKT", lines: ["new"] },
     ];
     const resolved = resolveEditAnchors(edits);
     expect(resolved[0].op).toBe("prepend");
@@ -110,14 +110,14 @@ describe("resolveEditAnchors", () => {
 
   it("rejects prepend with end", () => {
     const edits: HashlineToolEdit[] = [
-      { op: "prepend", end: "5#MQ", lines: ["new"] },
+      { op: "prepend", end: "5#MQKT", lines: ["new"] },
     ];
     expect(() => resolveEditAnchors(edits)).toThrow(/prepend does not support "end"/i);
   });
 
   it("parses string lines input", () => {
     const edits: HashlineToolEdit[] = [
-      { op: "replace", pos: "1#ZZ", lines: "hello\nworld\n" },
+      { op: "replace", pos: "1#ZZZZ", lines: "hello\nworld\n" },
     ];
     const resolved = resolveEditAnchors(edits);
     expect(resolved[0].lines).toEqual(["hello", "world"]);
@@ -125,7 +125,7 @@ describe("resolveEditAnchors", () => {
 
   it("parses null lines as empty array", () => {
     const edits: HashlineToolEdit[] = [
-      { op: "replace", pos: "1#ZZ", lines: null },
+      { op: "replace", pos: "1#ZZZZ", lines: null },
     ];
     const resolved = resolveEditAnchors(edits);
     expect(resolved[0].lines).toEqual([]);
@@ -133,7 +133,7 @@ describe("resolveEditAnchors", () => {
 
   it("throws on unknown op", () => {
     const edits: HashlineToolEdit[] = [
-      { op: "something_weird", pos: "1#ZZ", lines: ["x"] },
+      { op: "something_weird", pos: "1#ZZZZ", lines: ["x"] },
     ];
     expect(() => resolveEditAnchors(edits)).toThrow(
       'Unknown edit op "something_weird"',
@@ -141,7 +141,7 @@ describe("resolveEditAnchors", () => {
   });
 
   it("rejects missing op", () => {
-    const edits: HashlineToolEdit[] = [{ pos: "1#ZZ", lines: ["x"] } as any];
+    const edits: HashlineToolEdit[] = [{ pos: "1#ZZZZ", lines: ["x"] } as any];
     expect(() => resolveEditAnchors(edits)).toThrow(/Unknown edit op/);
   });
 });

@@ -11,7 +11,7 @@ Ops:
 Example:
 ```json
 { "path": "src/main.ts", "edits": [
-  { "op": "replace", "pos": "12#MQ", "lines": ["const x = 1;"] }
+  { "op": "replace", "pos": "12#MQKT", "lines": ["const x = 1;"] }
 ] }
 ```
 

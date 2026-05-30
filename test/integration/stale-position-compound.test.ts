@@ -25,7 +25,7 @@ describe("stale-position compound edits", () => {
     const toolEdits: HashlineToolEdit[] = [
       {
         op: "replace",
-        pos: "5#JR", // hash computed below
+        pos: "5#JRWS", // hash computed below
         lines: ["NEW_LINE_5"],
       },
       {

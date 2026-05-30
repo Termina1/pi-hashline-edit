@@ -36,27 +36,24 @@ interface NoopEdit {
  * - Visually confusable letters: D, G, I, L, O (look like digits 0, 6, 1, 1, 0)
  * - Common vowels A, E, I, O, U (prevents accidental English words)
  *
- * This makes hash references like "5#MQ" unambiguous — they can never be
+ * This makes hash references like "5#MQKT" unambiguous — they can never be
  * mistaken for code content, hex literals, or natural language.
  */
 const NIBBLE_STR = "ZPMQVRWSNKTXJBYH";
+const HASH_LENGTH = 4;
 const HASH_ALPHABET_RE = new RegExp(`^[${NIBBLE_STR}]+$`);
-
-const DICT = Array.from({ length: 256 }, (_, i) => {
-  const h = i >>> 4;
-  const l = i & 0x0f;
-  return `${NIBBLE_STR[h]}${NIBBLE_STR[l]}`;
-});
 
 /**
  * Patterns used to detect (and reject) hashline display prefixes inside edit
  * payloads. The runtime no longer strips them — the model must send literal
  * file content. Matching any of these triggers `[E_INVALID_PATCH]`.
  */
-const HASHLINE_PREFIX_RE =
-  /^\s*(?:>>>|>>)?\s*(?:\d+\s*#\s*|#\s*)[ZPMQVRWSNKTXJBYH]{2}:/;
-const HASHLINE_PREFIX_PLUS_RE =
-  /^\+\s*(?:\d+\s*#\s*|#\s*)[ZPMQVRWSNKTXJBYH]{2}:/;
+const HASHLINE_PREFIX_RE = new RegExp(
+  `^\\s*(?:>>>|>>)?\\s*(?:\\d+\\s*#\\s*|#\\s*)[${NIBBLE_STR}]{${HASH_LENGTH}}:`,
+);
+const HASHLINE_PREFIX_PLUS_RE = new RegExp(
+  `^\\+\\s*(?:\\d+\\s*#\\s*|#\\s*)[${NIBBLE_STR}]{${HASH_LENGTH}}:`,
+);
 const DIFF_MINUS_RE = /^-\s*\d+\s{4}/;
 
 /** Lines containing no alphanumeric characters (only punctuation/symbols/whitespace). */
@@ -72,7 +69,11 @@ export function computeLineHash(idx: number, line: string): string {
   if (!RE_SIGNIFICANT.test(line)) {
     seed = idx;
   }
-  return DICT[xxh32(line, seed) & 0xff];
+  const value = xxh32(line, seed) & 0xffff;
+  return Array.from(
+    { length: HASH_LENGTH },
+    (_, index) => NIBBLE_STR[(value >>> ((HASH_LENGTH - index - 1) * 4)) & 0x0f],
+  ).join("");
 }
 
 /** Shared fuzzy-match Unicode replacement regexes (also used by edit-diff.ts). */
@@ -101,10 +102,10 @@ function diagnoseLineRef(ref: string): string {
   const core = ref.replace(/^\s*[>+-]*\s*/, "").trim();
 
   if (!core.length) {
-    return `[E_BAD_REF] Invalid line reference "${ref}". Expected "LINE#HASH" (e.g. "5#MQ").`;
+    return `[E_BAD_REF] Invalid line reference "${ref}". Expected "LINE#HASH" (e.g. "5#MQKT").`;
   }
   if (/^\d+\s*$/.test(core)) {
-    return `[E_BAD_REF] Invalid line reference "${ref}": missing hash, use "LINE#HASH" from read output (e.g. "5#MQ").`;
+    return `[E_BAD_REF] Invalid line reference "${ref}": missing hash, use "LINE#HASH" from read output (e.g. "5#MQKT").`;
   }
   if (/^\d+\s*:/.test(core)) {
     return `[E_BAD_REF] Invalid line reference "${ref}": wrong separator, use "LINE#HASH" instead of "LINE:...".`;
@@ -117,8 +118,8 @@ function diagnoseLineRef(ref: string): string {
     if (line < 1) {
       return `[E_BAD_REF] Line number must be >= 1, got ${line} in "${ref}".`;
     }
-    if (hash.length !== 2) {
-      return `[E_BAD_REF] Invalid line reference "${ref}": hash must be exactly 2 characters from ${NIBBLE_STR}.`;
+    if (hash.length !== HASH_LENGTH) {
+      return `[E_BAD_REF] Invalid line reference "${ref}": hash must be exactly ${HASH_LENGTH} characters from ${NIBBLE_STR}.`;
     }
     if (!HASH_ALPHABET_RE.test(hash)) {
       return `[E_BAD_REF] Invalid line reference "${ref}": hash uses invalid characters, hashes use alphabet ${NIBBLE_STR} only.`;
@@ -134,7 +135,7 @@ function diagnoseLineRef(ref: string): string {
     return `[E_BAD_REF] Line number must be >= 1, got 0 in "${ref}".`;
   }
 
-  return `[E_BAD_REF] Invalid line reference "${trimmed || ref}". Expected "LINE#HASH" (e.g. "5#MQ").`;
+  return `[E_BAD_REF] Invalid line reference "${trimmed || ref}". Expected "LINE#HASH" (e.g. "5#MQKT").`;
 }
 
 export function parseLineRef(ref: string): { line: number; hash: string } {
@@ -158,8 +159,8 @@ function parseAnchorRef(ref: string): Anchor {
   }
 
   const hash = match[2]!;
-  if (hash.length !== 2) {
-    throw new Error(`[E_BAD_REF] Invalid line reference "${ref}": hash must be exactly 2 characters from ${NIBBLE_STR}.`);
+  if (hash.length !== HASH_LENGTH) {
+    throw new Error(`[E_BAD_REF] Invalid line reference "${ref}": hash must be exactly ${HASH_LENGTH} characters from ${NIBBLE_STR}.`);
   }
 
   if (!HASH_ALPHABET_RE.test(hash)) {

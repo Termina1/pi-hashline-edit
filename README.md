@@ -25,13 +25,13 @@ pi install /path/to/pi-hashline-edit
 Text files are returned with a `LINE#HASH:` prefix on every line. Line numbers may be left-padded within each returned block so the `#HASH:` columns align:
 
 ```text
- 8#VR:function hello() {
- 9#KT:  console.log("world");
-10#BH:}
+ 8#VRWS:function hello() {
+ 9#KTJY:  console.log("world");
+10#BHMQ:}
 ```
 
 - `LINE` — 1-indexed line number.
-- `HASH` — 2-character content hash from the alphabet `ZPMQVRWSNKTXJBYH`.
+- `HASH` — 4-character content hash from the alphabet `ZPMQVRWSNKTXJBYH`.
 
 Optional parameters:
 - `offset` — start reading from this line number (1-indexed).
@@ -47,7 +47,7 @@ Edits use the `LINE#HASH` anchors from `read` output to target lines precisely:
 {
   "path": "src/main.ts",
   "edits": [
-    { "op": "replace", "pos": "11#KT", "lines": ["  console.log('hashline');"] }
+    { "op": "replace", "pos": "11#KTJY", "lines": ["  console.log('hashline');"] }
   ]
 }
 ```
@@ -80,9 +80,9 @@ Each edit result includes a compact `Diff preview:` block showing the changed li
 
 ## Hashing
 
-Hashes are computed with [xxhashjs](https://github.com/pierrec/js-xxhash) (xxHash32), then mapped to a 2-character string from a custom 16-character alphabet.
+Hashes are computed with [xxhashjs](https://github.com/pierrec/js-xxhash) (xxHash32), then mapped to a 4-character string from a custom 16-character alphabet.
 
-The alphabet (`ZPMQVRWSNKTXJBYH`) excludes hex digits, common vowels, and visually ambiguous letters (D/G/I/L/O), so a reference like `5#MQ` can never be confused with code content, hex literals, or English words.
+The alphabet (`ZPMQVRWSNKTXJBYH`) excludes hex digits, common vowels, and visually ambiguous letters (D/G/I/L/O), so a reference like `5#MQKT` can never be confused with code content, hex literals, or English words.
 
 Lines that contain no alphanumeric characters (e.g. a lone `}`) use their line number as the hash seed to reduce collisions on structurally identical markers.
 

@@ -5,7 +5,7 @@ describe("strict edit input (no autocorrection)", () => {
   it("rejects array lines containing rendered LINE#HASH: prefixes", () => {
     const tag = `1#${computeLineHash(1, "foo")}`;
     const toolEdits: HashlineToolEdit[] = [
-      { op: "replace", pos: tag, lines: ["1#ZP:foo"] },
+      { op: "replace", pos: tag, lines: ["1#ZPVR:foo"] },
     ];
     expect(() => resolveEditAnchors(toolEdits)).toThrow(/^\[E_INVALID_PATCH\]/);
   });
@@ -13,7 +13,7 @@ describe("strict edit input (no autocorrection)", () => {
   it("rejects string lines containing rendered diff additions", () => {
     const tag = `1#${computeLineHash(1, "foo")}`;
     const toolEdits: HashlineToolEdit[] = [
-      { op: "replace", pos: tag, lines: "+1#ZP:foo" },
+      { op: "replace", pos: tag, lines: "+1#ZPVR:foo" },
     ];
     expect(() => resolveEditAnchors(toolEdits)).toThrow(/^\[E_INVALID_PATCH\]/);
   });

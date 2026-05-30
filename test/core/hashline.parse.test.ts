@@ -3,23 +3,23 @@ import { hashlineParseText, parseLineRef } from "../../src/hashline";
 
 describe("parseLineRef", () => {
   it("parses standard LINE#HASH format", () => {
-    const ref = parseLineRef("5#MQ");
-    expect(ref).toEqual({ line: 5, hash: "MQ" });
+    const ref = parseLineRef("5#MQKT");
+    expect(ref).toEqual({ line: 5, hash: "MQKT" });
   });
 
   it("parses with trailing content", () => {
-    const ref = parseLineRef("10#ZP:  const x = 1;");
-    expect(ref).toEqual({ line: 10, hash: "ZP" });
+    const ref = parseLineRef("10#ZPVR:  const x = 1;");
+    expect(ref).toEqual({ line: 10, hash: "ZPVR" });
   });
 
   it("tolerates leading >>> markers", () => {
-    const ref = parseLineRef(">>> 5#MQ:content");
-    expect(ref).toEqual({ line: 5, hash: "MQ" });
+    const ref = parseLineRef(">>> 5#MQKT:content");
+    expect(ref).toEqual({ line: 5, hash: "MQKT" });
   });
 
   it("tolerates leading +/- diff markers", () => {
-    expect(parseLineRef("+5#MQ")).toEqual({ line: 5, hash: "MQ" });
-    expect(parseLineRef("-5#MQ")).toEqual({ line: 5, hash: "MQ" });
+    expect(parseLineRef("+5#MQKT")).toEqual({ line: 5, hash: "MQKT" });
+    expect(parseLineRef("-5#MQKT")).toEqual({ line: 5, hash: "MQKT" });
   });
 
   it("throws on invalid format", () => {
@@ -31,19 +31,19 @@ describe("parseLineRef", () => {
   });
 
   it("diagnoses wrong separator", () => {
-    expect(() => parseLineRef("5:AB")).toThrow(/wrong separator/i);
+    expect(() => parseLineRef("5:ABCD")).toThrow(/wrong separator/i);
   });
 
   it("diagnoses invalid hash alphabet", () => {
-    expect(() => parseLineRef("12#ab")).toThrow(/alphabet ZPMQVRWSNKTXJBYH only/i);
+    expect(() => parseLineRef("12#abcd")).toThrow(/alphabet ZPMQVRWSNKTXJBYH only/i);
   });
 
   it("diagnoses invalid hash length", () => {
-    expect(() => parseLineRef("12#ABC")).toThrow(/hash must be exactly 2 characters/i);
+    expect(() => parseLineRef("12#ABC")).toThrow(/hash must be exactly 4 characters/i);
   });
 
   it("throws on line 0", () => {
-    expect(() => parseLineRef("0#MQ")).toThrow(/must be >= 1/);
+    expect(() => parseLineRef("0#MQKT")).toThrow(/must be >= 1/);
   });
 
   it("prefixes structured errors with [E_BAD_REF]", () => {
@@ -86,23 +86,23 @@ describe("hashlineParseText", () => {
   });
 
   it("rejects array input that contains LINE#HASH: prefixes", () => {
-    expect(() => hashlineParseText(["1#ZZ:foo", "2#MQ:bar"])).toThrow(/^\[E_INVALID_PATCH\]/);
+    expect(() => hashlineParseText(["1#ZZZZ:foo", "2#MQKT:bar"])).toThrow(/^\[E_INVALID_PATCH\]/);
   });
 
   it("rejects diff-preview hunks with + and context hash prefixes", () => {
     expect(() =>
-      hashlineParseText([" 9#MQ:keep", "+10#VR:new", " 11#WS:after"]),
+      hashlineParseText([" 9#MQKT:keep", "+10#VRWS:new", " 11#WSNK:after"]),
     ).toThrow(/^\[E_INVALID_PATCH\]/);
   });
 
   it("rejects diff-preview deletion rows", () => {
     expect(() =>
-      hashlineParseText([" 9#MQ:keep", "-10    old", " 11#WS:after"]),
+      hashlineParseText([" 9#MQKT:keep", "-10    old", " 11#WSNK:after"]),
     ).toThrow(/^\[E_INVALID_PATCH\]/);
   });
 
   it("rejects string-form rendered diff hunks", () => {
-    const input = " 9#MQ:keep\n-10    old\n+10#VR:new\n 11#WS:after";
+    const input = " 9#MQKT:keep\n-10    old\n+10#VRWS:new\n 11#WSNK:after";
     expect(() => hashlineParseText(input)).toThrow(/^\[E_INVALID_PATCH\]/);
   });
 });

@@ -47,7 +47,7 @@ describe("assertEditRequest", () => {
     const validate = ajv.compile(hashlineEditToolSchema as any);
     const payload = {
       path: "a.ts",
-      edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+      edits: [{ op: "replace", pos: "1#ZZZZ", lines: ["x"] }],
       oldText: "before",
       new_text: "after",
     };
@@ -62,7 +62,7 @@ describe("assertEditRequest", () => {
     expect(() =>
       assertEditRequest({
         path: "a.ts",
-        edits: [{ op: "append", end: "1#ZZ", lines: ["x"] }],
+        edits: [{ op: "append", end: "1#ZZZZ", lines: ["x"] }],
       } as any),
     ).toThrow(/does not support "end"/i);
   });
@@ -80,7 +80,7 @@ describe("assertEditRequest", () => {
     expect(() =>
       assertEditRequest({
         path: "a.ts",
-        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+        edits: [{ op: "replace", pos: "1#ZZZZ", lines: ["x"] }],
         oldText: 123,
       } as any),
     ).toThrow(/must be a string/i);
@@ -92,7 +92,7 @@ describe("assertEditRequest", () => {
       assertEditRequest({
         path: "a.ts",
         returnMode: "ranges",
-        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+        edits: [{ op: "replace", pos: "1#ZZZZ", lines: ["x"] }],
       } as any),
     ).toThrow(/returnRanges/i);
   });
@@ -103,7 +103,7 @@ describe("assertEditRequest", () => {
         path: "a.ts",
         returnMode: "changed",
         returnRanges: [{ start: 1, end: 2 }],
-        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+        edits: [{ op: "replace", pos: "1#ZZZZ", lines: ["x"] }],
       } as any),
     ).toThrow(/returnRanges/i);
   });
@@ -116,7 +116,7 @@ describe("registerEditTool", () => {
     expect(
       validate({
         path: "a.ts",
-        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+        edits: [{ op: "replace", pos: "1#ZZZZ", lines: ["x"] }],
       }),
     ).toBe(true);
   });
@@ -154,7 +154,7 @@ describe("registerEditTool", () => {
     expect(
       validate({
         path: "a.ts",
-        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+        edits: [{ op: "replace", pos: "1#ZZZZ", lines: ["x"] }],
         oldText: "before",
         newText: "after",
       }),

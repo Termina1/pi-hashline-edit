@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { applyHashlineEdits, computeLineHash, hashlineParseText } from "../../src/hashline";
 
 describe("computeLineHash", () => {
-  it("returns a 2-character string from NIBBLE_STR alphabet", () => {
+  it("returns a 4-character string from NIBBLE_STR alphabet", () => {
     const hash = computeLineHash(1, "hello");
-    expect(hash).toHaveLength(2);
-    expect(hash).toMatch(/^[ZPMQVRWSNKTXJBYH]{2}$/);
+    expect(hash).toHaveLength(4);
+    expect(hash).toMatch(/^[ZPMQVRWSNKTXJBYH]{4}$/);
   });
 
   it("trims trailing whitespace without collapsing internal spaces", () => {
@@ -20,8 +20,8 @@ describe("computeLineHash", () => {
   it("mixes line index for symbol-only lines", () => {
     const h1 = computeLineHash(1, "}");
     const h10 = computeLineHash(10, "}");
-    expect(h1).toMatch(/^[ZPMQVRWSNKTXJBYH]{2}$/);
-    expect(h10).toMatch(/^[ZPMQVRWSNKTXJBYH]{2}$/);
+    expect(h1).toMatch(/^[ZPMQVRWSNKTXJBYH]{4}$/);
+    expect(h10).toMatch(/^[ZPMQVRWSNKTXJBYH]{4}$/);
   });
 
   it("does NOT mix line index for lines with alphanumeric content", () => {

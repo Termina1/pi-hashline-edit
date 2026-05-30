@@ -650,7 +650,7 @@ function truncateOutlineEntry(text: string, max = 88): string {
 function collectOutlineEntries(previewText: string): string[] {
   const structural: string[] = [];
   for (const line of previewText.split("\n")) {
-    const match = line.match(/^\s*(\d+)#[A-Z]{2}:(.*)$/);
+    const match = line.match(/^\s*(\d+)#[A-Z]{4}:(.*)$/);
     if (!match) continue;
     const content = match[2]!.trim();
     if (content.length === 0) continue;
