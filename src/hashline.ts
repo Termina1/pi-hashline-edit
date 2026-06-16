@@ -14,7 +14,14 @@ export type HashlineEdit =
   | { op: "replace"; pos: Anchor; end?: Anchor; lines: string[] }
   | { op: "append"; pos?: Anchor; lines: string[] }
   | { op: "prepend"; pos?: Anchor; lines: string[] }
-  | { op: "replace_text"; oldText: string; newText: string };
+  | { op: "replace_text"; oldText: string; newText: string }
+  | { op: "replace_regex"; pattern: string; replacement: string; expectedMatches?: number; flags?: string[] }
+  | { op: "replace_dict"; mapping: Record<string, string> }
+  | { op: "delete_lines"; pattern: string; condition: "contains" | "not_contains" | "matches"; expectedRemoved?: number }
+  | { op: "insert_before"; marker: string; lines: string[]; occurrence?: number }
+  | { op: "insert_after"; marker: string; lines: string[]; occurrence?: number }
+  | { op: "delete_between"; startMarker: string; endMarker: string; occurrence?: number; inclusive?: boolean }
+  | { op: "replace_block"; startMarker: string; endMarker: string; lines: string[]; occurrence?: number; inclusive?: boolean };
 
 interface HashMismatch {
   line: number;
@@ -285,16 +292,16 @@ export function hashlineParseText(edit: string[] | string | null): string[] {
  */
 export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
   const result: HashlineEdit[] = [];
+  const VALID_OPS = new Set([
+    "replace", "append", "prepend", "replace_text",
+    "replace_regex", "replace_dict", "delete_lines",
+    "insert_before", "insert_after", "delete_between", "replace_block",
+  ]);
   for (const edit of edits) {
     const op = edit.op;
-    if (
-      op !== "replace" &&
-      op !== "append" &&
-      op !== "prepend" &&
-      op !== "replace_text"
-    ) {
+    if (!VALID_OPS.has(op)) {
       throw new Error(
-        `[E_BAD_OP] Unknown edit op "${op}". Expected "replace", "append", "prepend", or "replace_text".`,
+        `[E_BAD_OP] Unknown edit op "${op}". Expected one of: ${[...VALID_OPS].join(", ")}.`,
       );
     }
 
@@ -303,7 +310,6 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
         if (!edit.pos) {
           throw new Error('[E_BAD_OP] Replace requires a "pos" anchor.');
         }
-
         result.push({
           op: "replace",
           pos: parseAnchorRef(edit.pos),
@@ -316,7 +322,6 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
         if (edit.end !== undefined) {
           throw new Error('[E_BAD_OP] Append does not support "end". Use "pos" or omit it for EOF.');
         }
-
         result.push({
           op: "append",
           ...(edit.pos ? { pos: parseAnchorRef(edit.pos) } : {}),
@@ -328,7 +333,6 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
         if (edit.end !== undefined) {
           throw new Error('[E_BAD_OP] Prepend does not support "end". Use "pos" or omit it for BOF.');
         }
-
         result.push({
           op: "prepend",
           ...(edit.pos ? { pos: parseAnchorRef(edit.pos) } : {}),
@@ -342,11 +346,102 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
         if (oldText === undefined || newText === undefined) {
           throw new Error('[E_BAD_OP] replace_text requires string "oldText" and "newText" fields.');
         }
-
         result.push({
           op: "replace_text",
           oldText,
           newText,
+        });
+        break;
+      }
+      case "replace_regex": {
+        if (typeof edit.pattern !== "string" || typeof edit.replacement !== "string") {
+          throw new Error('[E_BAD_OP] replace_regex requires string "pattern" and "replacement".');
+        }
+        result.push({
+          op: "replace_regex",
+          pattern: edit.pattern,
+          replacement: normalizeExactText(edit.replacement) ?? edit.replacement,
+          expectedMatches: edit.expectedMatches ?? 1,
+          ...(edit.flags ? { flags: edit.flags } : {}),
+        });
+        break;
+      }
+      case "replace_dict": {
+        if (typeof edit.mapping !== "object" || edit.mapping === null) {
+          throw new Error('[E_BAD_OP] replace_dict requires a "mapping" object of {old: new} pairs.');
+        }
+        const normalized: Record<string, string> = {};
+        for (const [key, value] of Object.entries(edit.mapping)) {
+          if (typeof value !== "string") {
+            throw new Error(`[E_BAD_OP] replace_dict mapping value for "${key}" must be a string.`);
+          }
+          normalized[normalizeExactText(key) ?? key] = normalizeExactText(value) ?? value;
+        }
+        result.push({ op: "replace_dict", mapping: normalized });
+        break;
+      }
+      case "delete_lines": {
+        if (typeof edit.pattern !== "string") {
+          throw new Error('[E_BAD_OP] delete_lines requires a string "pattern".');
+        }
+        const condition = edit.condition ?? "contains";
+        if (condition !== "contains" && condition !== "not_contains" && condition !== "matches") {
+          throw new Error('[E_BAD_OP] delete_lines "condition" must be "contains", "not_contains", or "matches".');
+        }
+        result.push({
+          op: "delete_lines",
+          pattern: edit.pattern,
+          condition,
+          ...(edit.expectedRemoved !== undefined ? { expectedRemoved: edit.expectedRemoved } : {}),
+        });
+        break;
+      }
+      case "insert_before":
+      case "insert_after": {
+        if (typeof edit.marker !== "string" || edit.marker.length === 0) {
+          throw new Error(`[E_BAD_OP] ${op} requires a non-empty string "marker".`);
+        }
+        const marker = normalizeExactText(edit.marker) ?? edit.marker;
+        const lines = hashlineParseText(edit.lines ?? null);
+        if (lines.length === 0) {
+          throw new Error(`[E_BAD_OP] ${op} requires non-empty "lines".`);
+        }
+        result.push({
+          op: op as "insert_before" | "insert_after",
+          marker,
+          lines,
+          occurrence: edit.occurrence ?? 1,
+        });
+        break;
+      }
+      case "delete_between": {
+        if (typeof edit.startMarker !== "string" || typeof edit.endMarker !== "string") {
+          throw new Error('[E_BAD_OP] delete_between requires string "startMarker" and "endMarker".');
+        }
+        result.push({
+          op: "delete_between",
+          startMarker: normalizeExactText(edit.startMarker) ?? edit.startMarker,
+          endMarker: normalizeExactText(edit.endMarker) ?? edit.endMarker,
+          occurrence: edit.occurrence ?? 1,
+          inclusive: edit.inclusive ?? false,
+        });
+        break;
+      }
+      case "replace_block": {
+        if (typeof edit.startMarker !== "string" || typeof edit.endMarker !== "string") {
+          throw new Error('[E_BAD_OP] replace_block requires string "startMarker" and "endMarker".');
+        }
+        const lines = hashlineParseText(edit.lines ?? null);
+        if (lines.length === 0) {
+          throw new Error('[E_BAD_OP] replace_block requires non-empty "lines".');
+        }
+        result.push({
+          op: "replace_block",
+          startMarker: normalizeExactText(edit.startMarker) ?? edit.startMarker,
+          endMarker: normalizeExactText(edit.endMarker) ?? edit.endMarker,
+          lines,
+          occurrence: edit.occurrence ?? 1,
+          inclusive: edit.inclusive ?? false,
         });
         break;
       }
@@ -360,11 +455,29 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 /** Schema-level edit as received from the tool layer (pos/end are tag strings, lines may be string|null). */
 export type HashlineToolEdit = {
   op: string;
+  path?: string;
   pos?: string;
   end?: string;
   lines?: string[] | string | null;
   oldText?: string;
   newText?: string;
+  // replace_regex
+  pattern?: string;
+  replacement?: string;
+  expectedMatches?: number;
+  flags?: string[];
+  // replace_dict
+  mapping?: Record<string, string>;
+  // delete_lines
+  condition?: "contains" | "not_contains" | "matches";
+  expectedRemoved?: number;
+  // insert_before / insert_after
+  marker?: string;
+  occurrence?: number;
+  // delete_between / replace_block
+  startMarker?: string;
+  endMarker?: string;
+  inclusive?: boolean;
 };
 
 function normalizeExactText(text: string | undefined): string | undefined {
@@ -380,7 +493,13 @@ function maybeWarnSuspiciousUnicodeEscapePlaceholder(
   warnings: string[],
 ): void {
   for (const edit of edits) {
-    if (edit.op === "replace_text") {
+    if (
+      edit.op === "replace_text" ||
+      edit.op === "replace_regex" ||
+      edit.op === "replace_dict" ||
+      edit.op === "delete_lines" ||
+      edit.op === "delete_between"
+    ) {
       continue;
     }
     if (edit.lines.some((line) => /\\uDDDD/i.test(line))) {
@@ -449,6 +568,20 @@ function describeEdit(edit: HashlineEdit): string {
         : "prepend at BOF";
     case "replace_text":
       return `replace_text \"${previewText(edit.oldText)}\"`;
+    case "replace_regex":
+      return `replace_regex /${previewText(edit.pattern)}/`;
+    case "replace_dict":
+      return `replace_dict (${Object.keys(edit.mapping).length} keys)`;
+    case "delete_lines":
+      return `delete_lines ${edit.condition} \"${previewText(edit.pattern)}\"`;
+    case "insert_before":
+      return `insert_before \"${previewText(edit.marker)}\"`;
+    case "insert_after":
+      return `insert_after \"${previewText(edit.marker)}\"`;
+    case "delete_between":
+      return `delete_between \"${previewText(edit.startMarker)}\"..\"${previewText(edit.endMarker)}\"`;
+    case "replace_block":
+      return `replace_block \"${previewText(edit.startMarker)}\"..\"${previewText(edit.endMarker)}\"`;
   }
 }
 
@@ -488,6 +621,51 @@ function cloneHashlineEdit(edit: HashlineEdit): HashlineEdit {
         op: "replace_text",
         oldText: edit.oldText,
         newText: edit.newText,
+      };
+    case "replace_regex":
+      return {
+        op: "replace_regex",
+        pattern: edit.pattern,
+        replacement: edit.replacement,
+        expectedMatches: edit.expectedMatches,
+        ...(edit.flags ? { flags: [...edit.flags] } : {}),
+      };
+    case "replace_dict":
+      return {
+        op: "replace_dict",
+        mapping: { ...edit.mapping },
+      };
+    case "delete_lines":
+      return {
+        op: "delete_lines",
+        pattern: edit.pattern,
+        condition: edit.condition,
+        ...(edit.expectedRemoved !== undefined ? { expectedRemoved: edit.expectedRemoved } : {}),
+      };
+    case "insert_before":
+    case "insert_after":
+      return {
+        op: edit.op,
+        marker: edit.marker,
+        lines: [...edit.lines],
+        occurrence: edit.occurrence,
+      };
+    case "delete_between":
+      return {
+        op: "delete_between",
+        startMarker: edit.startMarker,
+        endMarker: edit.endMarker,
+        occurrence: edit.occurrence,
+        inclusive: edit.inclusive,
+      };
+    case "replace_block":
+      return {
+        op: "replace_block",
+        startMarker: edit.startMarker,
+        endMarker: edit.endMarker,
+        lines: [...edit.lines],
+        occurrence: edit.occurrence,
+        inclusive: edit.inclusive,
       };
   }
 }
@@ -555,6 +733,131 @@ function findExactUniqueTextMatch(
     start,
     end: start + oldText.length,
   };
+}
+
+/**
+ * Count exact occurrences of a substring in content.
+ */
+function countOccurrences(content: string, search: string): number {
+  if (search.length === 0) return 0;
+  let count = 0;
+  let from = 0;
+  while (from <= content.length - search.length) {
+    const idx = content.indexOf(search, from);
+    if (idx === -1) break;
+    count++;
+    from = idx + 1;
+  }
+  return count;
+}
+
+/**
+ * Find the first character position where old and new content differ.
+ */
+function findFirstDiff(oldContent: string, newContent: string): number {
+  const minLen = Math.min(oldContent.length, newContent.length);
+  for (let i = 0; i < minLen; i++) {
+    if (oldContent[i] !== newContent[i]) return i;
+  }
+  return minLen;
+}
+
+/**
+ * Find the last differing span between old and new content.
+ */
+function findLastDiff(oldContent: string, newContent: string): { end: number; endInNew: number } {
+  let oldIdx = oldContent.length - 1;
+  let newIdx = newContent.length - 1;
+  const firstDiff = findFirstDiff(oldContent, newContent);
+  while (oldIdx >= firstDiff && newIdx >= firstDiff && oldContent[oldIdx] === newContent[newIdx]) {
+    oldIdx--;
+    newIdx--;
+  }
+  return { end: oldIdx + 1, endInNew: newIdx + 1 };
+}
+
+/**
+ * Find the Nth occurrence of marker text in content.
+ */
+function findMarkerOccurrence(
+  content: string,
+  marker: string,
+  occurrence: number,
+  opLabel: string,
+): { start: number; end: number } {
+  if (marker.length === 0) {
+    throw new Error(`[E_BAD_OP] ${opLabel} requires non-empty marker.`);
+  }
+  const positions: number[] = [];
+  let from = 0;
+  while (from <= content.length - marker.length) {
+    const idx = content.indexOf(marker, from);
+    if (idx === -1) break;
+    positions.push(idx);
+    from = idx + 1;
+  }
+  if (positions.length === 0) {
+    throw new Error(`[E_NO_MATCH] ${opLabel}: marker not found in file.`);
+  }
+  if (occurrence > positions.length) {
+    throw new Error(`[E_NO_MATCH] ${opLabel}: requested occurrence ${occurrence} but marker found ${positions.length} time(s).`);
+  }
+  if (occurrence === 1 && positions.length > 1) {
+    throw new Error(`[E_MULTI_MATCH] ${opLabel}: marker appears ${positions.length} times. Specify "occurrence" or make marker more specific.`);
+  }
+  const idx = positions[occurrence - 1]!;
+  return { start: idx, end: idx + marker.length };
+}
+
+/**
+ * Find the span between startMarker and endMarker (occurrence-th pair).
+ */
+function findBetweenMarkers(
+  content: string,
+  startMarker: string,
+  endMarker: string,
+  occurrence: number,
+  opLabel: string,
+  inclusive: boolean,
+): { start: number; end: number } {
+  if (startMarker.length === 0 || endMarker.length === 0) {
+    throw new Error(`[E_BAD_OP] ${opLabel} requires non-empty markers.`);
+  }
+  // Find all start positions
+  const starts: number[] = [];
+  let from = 0;
+  while (from <= content.length - startMarker.length) {
+    const idx = content.indexOf(startMarker, from);
+    if (idx === -1) break;
+    starts.push(idx);
+    from = idx + 1;
+  }
+  if (starts.length === 0) {
+    throw new Error(`[E_NO_MATCH] ${opLabel}: startMarker not found.`);
+  }
+  if (occurrence > starts.length) {
+    throw new Error(`[E_NO_MATCH] ${opLabel}: occurrence ${occurrence} but startMarker found ${starts.length} time(s).`);
+  }
+  const startPos = starts[occurrence - 1]!;
+  const searchFrom = startPos + startMarker.length;
+  const endIdx = content.indexOf(endMarker, searchFrom);
+  if (endIdx === -1) {
+    throw new Error(`[E_NO_MATCH] ${opLabel}: endMarker not found after startMarker.`);
+  }
+  // Strict uniqueness: reject if startMarker appears again before endMarker
+  const nextStart = content.indexOf(startMarker, searchFrom);
+  if (nextStart !== -1 && nextStart < endIdx) {
+    throw new Error(`[E_MULTI_MATCH] ${opLabel}: startMarker appears again before endMarker. Markers must have a unique pair.`);
+  }
+  // Also reject if endMarker appears again before any next startMarker
+  const nextEndAfter = content.indexOf(endMarker, endIdx + endMarker.length);
+  if (nextEndAfter !== -1 && (nextStart === -1 || nextEndAfter < nextStart)) {
+    throw new Error(`[E_MULTI_MATCH] ${opLabel}: endMarker appears again before the next startMarker. Ambiguous pair. Make markers more specific or use occurrence.`);
+  }
+  if (inclusive) {
+    return { start: startPos, end: endIdx + endMarker.length };
+  }
+  return { start: startPos + startMarker.length, end: endIdx };
 }
 
 function resolveEditToSpan(
@@ -709,7 +1012,6 @@ function resolveEditToSpan(
         });
         return null;
       }
-
       return {
         kind: "replace",
         index,
@@ -717,6 +1019,219 @@ function resolveEditToSpan(
         start: match.start,
         end: match.end,
         replacement: edit.newText,
+      };
+    }
+    case "replace_regex": {
+      if (edit.pattern.length === 0) {
+        throw new Error("[E_BAD_OP] replace_regex requires non-empty pattern.");
+      }
+      let reFlags = "g";
+      if (edit.flags) {
+        if (edit.flags.includes("case_insensitive")) reFlags += "i";
+        if (edit.flags.includes("multiline")) reFlags += "m";
+        if (edit.flags.includes("dotall")) reFlags += "s";
+      }
+      const regex = new RegExp(edit.pattern, reFlags);
+      const matches = [...content.matchAll(regex)];
+      const expected = edit.expectedMatches ?? 1;
+      if (matches.length === 0) {
+        throw new Error(`[E_NO_MATCH] replace_regex: pattern had no matches.`);
+      }
+      if (expected === 1 && matches.length > 1) {
+        throw new Error(`[E_MULTI_MATCH] replace_regex: pattern matched ${matches.length} times. Make pattern more specific, use "global" flag, or set expectedMatches.`);
+      }
+      if (expected > 0 && matches.length !== expected) {
+        throw new Error(`[E_MULTI_MATCH] replace_regex: expected ${expected} match(es), got ${matches.length}.`);
+      }
+      const newContent = content.replace(regex, edit.replacement);
+      if (newContent === content) {
+        noopEdits.push({
+          editIndex: index,
+          loc: `replace_regex /${previewText(edit.pattern)}/`,
+          currentContent: `(no change)`,
+        });
+        return null;
+      }
+      const firstDiff = findFirstDiff(content, newContent);
+      const lastDiff = findLastDiff(content, newContent);
+      return {
+        kind: "replace",
+        index,
+        label: describeEdit(edit),
+        start: firstDiff,
+        end: lastDiff.end,
+        replacement: newContent.slice(firstDiff, lastDiff.endInNew),
+      };
+    }
+    case "replace_dict": {
+      const entries = Object.entries(edit.mapping);
+      if (entries.length === 0) {
+        throw new Error("[E_BAD_OP] replace_dict requires a non-empty mapping.");
+      }
+      // Phase 1: validate ALL keys against ORIGINAL content (not cascaded)
+      const spans: Array<{ start: number; end: number; replacement: string }> = [];
+      for (const [oldStr, newStr] of entries) {
+        if (oldStr.length === 0) {
+          throw new Error("[E_BAD_OP] replace_dict keys must be non-empty strings.");
+        }
+        const count = countOccurrences(content, oldStr);
+        if (count === 0) {
+          throw new Error(`[E_NO_MATCH] replace_dict: "${previewText(oldStr)}" not found.`);
+        }
+        if (count > 1) {
+          throw new Error(`[E_MULTI_MATCH] replace_dict: "${previewText(oldStr)}" appears ${count} times. Each key must match exactly once.`);
+        }
+        if (oldStr === newStr) continue;
+        const idx = content.indexOf(oldStr);
+        spans.push({ start: idx, end: idx + oldStr.length, replacement: newStr });
+      }
+      if (spans.length === 0) {
+        noopEdits.push({
+          editIndex: index,
+          loc: `replace_dict (${entries.length} keys)`,
+          currentContent: "(all no-ops)",
+        });
+        return null;
+      }
+      // Phase 2: check for overlapping spans
+      spans.sort((a, b) => a.start - b.start);
+      for (let i = 1; i < spans.length; i++) {
+        if (spans[i]!.start < spans[i - 1]!.end) {
+          throw new Error("[E_EDIT_CONFLICT] replace_dict: overlapping replacements detected. Merge them or split into separate edits.");
+        }
+      }
+      // Phase 3: apply bottom-up
+      let newContent = content;
+      for (let i = spans.length - 1; i >= 0; i--) {
+        const s = spans[i]!;
+        newContent = newContent.slice(0, s.start) + s.replacement + newContent.slice(s.end);
+      }
+      const firstDiff = findFirstDiff(content, newContent);
+      const lastDiff = findLastDiff(content, newContent);
+      return {
+        kind: "replace",
+        index,
+        label: describeEdit(edit),
+        start: firstDiff,
+        end: lastDiff.end,
+        replacement: newContent.slice(firstDiff, lastDiff.endInNew),
+      };
+    }
+    case "delete_lines": {
+      if (edit.pattern.length === 0) {
+        throw new Error("[E_BAD_OP] delete_lines requires a non-empty pattern.");
+      }
+      const lines = content.split("\n");
+      const keep: boolean[] = new Array(lines.length).fill(true);
+      let removed = 0;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        let shouldRemove = false;
+        switch (edit.condition) {
+          case "contains": shouldRemove = line.includes(edit.pattern); break;
+          case "not_contains": shouldRemove = !line.includes(edit.pattern); break;
+          case "matches": shouldRemove = new RegExp(edit.pattern).test(line); break;
+        }
+        if (shouldRemove) { keep[i] = false; removed++; }
+      }
+      if (edit.expectedRemoved !== undefined && removed !== edit.expectedRemoved) {
+        throw new Error(`delete_lines: expected ${edit.expectedRemoved} removed, got ${removed}.`);
+      }
+      if (removed === 0) {
+        noopEdits.push({
+          editIndex: index,
+          loc: `delete_lines ${edit.condition} "${previewText(edit.pattern)}"`,
+          currentContent: "(no matching lines)",
+        });
+        return null;
+      }
+      // Build replacement: span from first removed line start to last removed line end,
+      // preserving line separators between kept lines within the span.
+      let firstRemoved = -1, lastRemoved = -1;
+      for (let i = 0; i < keep.length; i++) {
+        if (!keep[i]) { if (firstRemoved === -1) firstRemoved = i; lastRemoved = i; }
+      }
+      const lsIdx = buildLineIndex(content);
+      const spanStart = lsIdx.lineStarts[firstRemoved]!;
+      // End of span: after last removed line (including its newline if not at EOF)
+      const hasNewlineAfter = lastRemoved < lines.length - 1 || content.endsWith("\n");
+      const spanEnd = lsIdx.lineStarts[lastRemoved]! + lines[lastRemoved]!.length + (hasNewlineAfter ? 1 : 0);
+      // Build replacement from original content slice, keeping only non-removed lines
+      const originalSpan = content.slice(spanStart, spanEnd);
+      const spanLines = originalSpan.split("\n");
+      // Restore the trailing empty string if originalSpan ends with newline
+      const hasTrailingNewline = originalSpan.endsWith("\n");
+      const keptSpanLines = spanLines.filter((_, i) => {
+        const globalIdx = firstRemoved + i;
+        return globalIdx <= lastRemoved && keep[globalIdx];
+      });
+      const replacement = keptSpanLines.join("\n") + (hasTrailingNewline && keptSpanLines.length > 0 ? "\n" : "");
+      return {
+        kind: "replace",
+        index,
+        label: describeEdit(edit),
+        start: spanStart,
+        end: spanEnd,
+        replacement,
+      };
+    }
+    case "insert_before":
+    case "insert_after": {
+      const markerMatch = findMarkerOccurrence(content, edit.marker, edit.occurrence, edit.op);
+      const insertedText = edit.lines.join("\n");
+      const pos = edit.op === "insert_before" ? markerMatch.start : markerMatch.end;
+      const before = content.slice(0, pos);
+      const after = content.slice(pos);
+      const needsLeadingNewline = before.length > 0 && !before.endsWith("\n");
+      const needsTrailingNewline = after.length > 0 && !after.startsWith("\n");
+      const replacement = (needsLeadingNewline ? "\n" : "") + insertedText + (needsTrailingNewline ? "\n" : "");
+      return {
+        kind: "insert",
+        index,
+        label: describeEdit(edit),
+        start: pos,
+        end: pos,
+        replacement,
+        boundary: pos,
+      };
+    }
+    case "delete_between": {
+      const span = findBetweenMarkers(content, edit.startMarker, edit.endMarker, edit.occurrence, "delete_between", edit.inclusive);
+      if (span.start >= span.end) {
+        noopEdits.push({
+          editIndex: index,
+          loc: `delete_between "${previewText(edit.startMarker)}".."${previewText(edit.endMarker)}"`,
+          currentContent: "(empty span)",
+        });
+        return null;
+      }
+      return {
+        kind: "replace",
+        index,
+        label: describeEdit(edit),
+        start: span.start,
+        end: span.end,
+        replacement: "",
+      };
+    }
+    case "replace_block": {
+      const span = findBetweenMarkers(content, edit.startMarker, edit.endMarker, edit.occurrence, "replace_block", edit.inclusive);
+      const replacement = edit.lines.join("\n");
+      if (content.slice(span.start, span.end) === replacement) {
+        noopEdits.push({
+          editIndex: index,
+          loc: `replace_block "${previewText(edit.startMarker)}".."${previewText(edit.endMarker)}"`,
+          currentContent: "(already matches)",
+        });
+        return null;
+      }
+      return {
+        kind: "replace",
+        index,
+        label: describeEdit(edit),
+        start: span.start,
+        end: span.end,
+        replacement,
       };
     }
   }
@@ -858,6 +1373,13 @@ export function applyHashlineEdits(
         break;
       }
       case "replace_text":
+      case "replace_regex":
+      case "replace_dict":
+      case "delete_lines":
+      case "insert_before":
+      case "insert_after":
+      case "delete_between":
+      case "replace_block":
         break;
     }
   }

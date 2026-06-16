@@ -20,7 +20,9 @@ import {
 import { resolveMutationTargetPath, writeFileAtomically } from "./fs-write";
 import {
   applyHashlineEdits,
+  computeAffectedLineRange,
   computeLegacyEditLineRange,
+  formatHashlineRegion,
   resolveEditAnchors,
   type HashlineToolEdit,
 } from "./hashline";
@@ -54,7 +56,8 @@ const returnRangeSchema = Type.Object(
 
 const hashlineEditItemSchema = Type.Object(
   {
-    op: StringEnum(["replace", "append", "prepend", "replace_text"] as const, {
+    path: Type.Optional(Type.String({ description: "file path for this edit; defaults to top-level path" })),
+    op: StringEnum(["replace", "append", "prepend", "replace_text", "replace_regex", "replace_dict", "delete_lines", "insert_before", "insert_after", "delete_between", "replace_block"] as const, {
       description: 'edit operation: "replace", "append", "prepend", or "replace_text"',
     }),
     pos: Type.Optional(Type.String({ description: "anchor" })),
@@ -62,6 +65,18 @@ const hashlineEditItemSchema = Type.Object(
     lines: Type.Optional(hashlineEditLinesSchema),
     oldText: Type.Optional(Type.String({ description: "exact text to replace" })),
     newText: Type.Optional(Type.String({ description: "replacement text" })),
+    pattern: Type.Optional(Type.String({ description: "regex pattern for replace_regex" })),
+    replacement: Type.Optional(Type.String({ description: "replacement string (supports $1, $2)" })),
+    expectedMatches: Type.Optional(Type.Integer({ minimum: 0 })),
+    flags: Type.Optional(Type.Array(StringEnum(["global", "multiline", "dotall", "case_insensitive"] as const))),
+    mapping: Type.Optional(Type.Record(Type.String(), Type.String())),
+    condition: Type.Optional(StringEnum(["contains", "not_contains", "matches"] as const)),
+    expectedRemoved: Type.Optional(Type.Integer({ minimum: 0 })),
+    marker: Type.Optional(Type.String()),
+    occurrence: Type.Optional(Type.Integer({ minimum: 1 })),
+    startMarker: Type.Optional(Type.String()),
+    endMarker: Type.Optional(Type.String()),
+    inclusive: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -176,7 +191,7 @@ const ROOT_KEYS = new Set([
   "old_text",
   "new_text",
 ]);
-const ITEM_KEYS = new Set(["op", "pos", "end", "lines", "oldText", "newText"]);
+const ITEM_KEYS = new Set(["op", "path", "pos", "end", "lines", "oldText", "newText", "pattern", "replacement", "expectedMatches", "flags", "mapping", "condition", "expectedRemoved", "marker", "occurrence", "startMarker", "endMarker", "inclusive"]);
 const LEGACY_KEYS = ["oldText", "newText", "old_text", "new_text"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -313,10 +328,17 @@ export function assertEditRequest(request: unknown): asserts request is EditRequ
       edit.op !== "replace" &&
       edit.op !== "append" &&
       edit.op !== "prepend" &&
-      edit.op !== "replace_text"
+      edit.op !== "replace_text" &&
+      edit.op !== "replace_regex" &&
+      edit.op !== "replace_dict" &&
+      edit.op !== "delete_lines" &&
+      edit.op !== "insert_before" &&
+      edit.op !== "insert_after" &&
+      edit.op !== "delete_between" &&
+      edit.op !== "replace_block"
     ) {
       throw new Error(
-        `Edit ${index} uses unknown op "${edit.op}". Expected "replace", "append", "prepend", or "replace_text".`,
+        `Edit ${index} uses unknown op "${edit.op}". Expected one of: replace, append, prepend, replace_text, replace_regex, replace_dict, delete_lines, insert_before, insert_after, delete_between, replace_block.`,
       );
     }
 
@@ -345,14 +367,76 @@ export function assertEditRequest(request: unknown): asserts request is EditRequ
 
     if (edit.op === "replace_text") {
       if (typeof edit.oldText !== "string" || typeof edit.newText !== "string") {
-        throw new Error(
-          `Edit ${index} with op "replace_text" requires string "oldText" and "newText" fields.`,
-        );
+        throw new Error(`Edit ${index} with op "replace_text" requires string "oldText" and "newText" fields.`);
       }
       if (hasOwn(edit, "pos") || hasOwn(edit, "end") || hasOwn(edit, "lines")) {
-        throw new Error(
-          `Edit ${index} with op "replace_text" only supports "oldText" and "newText".`,
-        );
+        throw new Error(`Edit ${index} with op "replace_text" only supports "oldText" and "newText".`);
+      }
+      continue;
+    }
+    if (edit.op === "replace_regex") {
+      if (typeof edit.pattern !== "string" || typeof edit.replacement !== "string") {
+        throw new Error(`Edit ${index} with op "replace_regex" requires string "pattern" and "replacement".`);
+      }
+      if (hasOwn(edit, "pos") || hasOwn(edit, "end") || hasOwn(edit, "oldText") || hasOwn(edit, "newText") || hasOwn(edit, "marker")) {
+        throw new Error(`Edit ${index} with op "replace_regex" does not support pos/end/oldText/newText/marker.`);
+      }
+      if (hasOwn(edit, "expectedMatches") && (typeof edit.expectedMatches !== "number" || edit.expectedMatches < 0)) {
+        throw new Error(`Edit ${index} field "expectedMatches" must be a non-negative integer.`);
+      }
+      if (hasOwn(edit, "flags") && (!Array.isArray(edit.flags) || !edit.flags.every((f: unknown) => typeof f === "string" && ["global","multiline","dotall","case_insensitive"].includes(f as string)))) {
+        throw new Error(`Edit ${index} field "flags" must be an array of: global, multiline, dotall, case_insensitive.`);
+      }
+      continue;
+    }
+    if (edit.op === "replace_dict") {
+      if (typeof edit.mapping !== "object" || edit.mapping === null) {
+        throw new Error(`Edit ${index} with op "replace_dict" requires a "mapping" object.`);
+      }
+      if (hasOwn(edit, "pos") || hasOwn(edit, "end") || hasOwn(edit, "oldText") || hasOwn(edit, "newText") || hasOwn(edit, "marker") || hasOwn(edit, "pattern")) {
+        throw new Error(`Edit ${index} with op "replace_dict" does not support pos/end/oldText/newText/marker/pattern.`);
+      }
+      continue;
+    }
+    if (edit.op === "delete_lines") {
+      if (typeof edit.pattern !== "string") {
+        throw new Error(`Edit ${index} with op "delete_lines" requires a string "pattern" field.`);
+      }
+      if (hasOwn(edit, "pos") || hasOwn(edit, "end") || hasOwn(edit, "oldText") || hasOwn(edit, "newText") || hasOwn(edit, "marker") || hasOwn(edit, "replacement") || hasOwn(edit, "lines")) {
+        throw new Error(`Edit ${index} with op "delete_lines" does not support pos/end/oldText/newText/marker/replacement/lines.`);
+      }
+      continue;
+    }
+    if (edit.op === "delete_between" || edit.op === "replace_block") {
+      if (typeof edit.startMarker !== "string" || typeof edit.endMarker !== "string") {
+        throw new Error(`Edit ${index} with op "${edit.op}" requires string "startMarker" and "endMarker".`);
+      }
+      if (hasOwn(edit, "pos") || hasOwn(edit, "end") || hasOwn(edit, "oldText") || hasOwn(edit, "newText") || hasOwn(edit, "marker") || hasOwn(edit, "pattern")) {
+        throw new Error(`Edit ${index} with op "${edit.op}" does not support pos/end/oldText/newText/marker/pattern.`);
+      }
+      if (hasOwn(edit, "occurrence") && (typeof edit.occurrence !== "number" || edit.occurrence < 1 || !Number.isInteger(edit.occurrence))) {
+        throw new Error(`Edit ${index} field "occurrence" must be a positive integer.`);
+      }
+      if (edit.op === "replace_block" && !hasOwn(edit, "lines")) {
+        throw new Error(`Edit ${index} with op "replace_block" requires a "lines" field.`);
+      }
+      if (edit.op === "delete_between" && hasOwn(edit, "lines")) {
+        throw new Error(`Edit ${index} with op "delete_between" does not support "lines". Use "replace_block" to replace content between markers.`);
+      }
+      continue;
+    }
+    if (edit.op === "insert_before" || edit.op === "insert_after") {
+      if (typeof edit.marker !== "string") {
+        throw new Error(`Edit ${index} with op "${edit.op}" requires a string "marker" field.`);
+      }
+      if (!hasOwn(edit, "lines")) {
+        throw new Error(`Edit ${index} with op "${edit.op}" requires a "lines" field.`);
+      }
+      if (hasOwn(edit, "pos") || hasOwn(edit, "end") || hasOwn(edit, "oldText") || hasOwn(edit, "newText") || hasOwn(edit, "pattern") || hasOwn(edit, "startMarker")) {
+        throw new Error(`Edit ${index} with op "${edit.op}" does not support pos/end/oldText/newText/pattern/startMarker.`);
+      }
+      if (hasOwn(edit, "occurrence") && (typeof edit.occurrence !== "number" || edit.occurrence < 1 || !Number.isInteger(edit.occurrence))) {
+        throw new Error(`Edit ${index} field "occurrence" must be a positive integer.`);
       }
       continue;
     }
@@ -360,17 +444,14 @@ export function assertEditRequest(request: unknown): asserts request is EditRequ
     if (!hasOwn(edit, "lines")) {
       throw new Error(`Edit ${index} requires a "lines" field.`);
     }
-
     if (hasOwn(edit, "oldText") || hasOwn(edit, "newText")) {
       throw new Error(
         `Edit ${index} with op "${edit.op}" does not support "oldText" or "newText".`,
       );
     }
-
     if (edit.op === "replace" && typeof edit.pos !== "string") {
       throw new Error(`Edit ${index} with op "replace" requires a "pos" anchor string.`);
     }
-
     if ((edit.op === "append" || edit.op === "prepend") && hasOwn(edit, "end")) {
       throw new Error(
         `Edit ${index} with op "${edit.op}" does not support "end". Use "pos" or omit it for file boundary insertion.`,
@@ -794,6 +875,122 @@ export async function computeEditPreview(
   }
 }
 
+/** Multi-file edit: dry-run all files → validate → write non-noop → aggregate. */
+async function executeMultiFile(
+  topPath: string,
+  toolEdits: HashlineToolEdit[],
+  returnMode: ReturnMode,
+  requestedReturnRanges: ReturnRange[] | undefined,
+  signal: AbortSignal | undefined,
+  ctx: { cwd: string },
+): Promise<any> {
+  // Group edits by canonical path
+  const groups = new Map<string, { rawPath: string; edits: HashlineToolEdit[] }>();
+  for (const edit of toolEdits) {
+    const rawPath = edit.path ?? topPath;
+    const abs = resolveToCwd(rawPath, ctx.cwd);
+    const canonical = await resolveMutationTargetPath(abs);
+    if (!groups.has(canonical)) groups.set(canonical, { rawPath, edits: [] });
+    groups.get(canonical)!.edits.push(edit);
+  }
+
+  // Phase 1: DRY-RUN — validate all, no writes
+  const pre: Array<{
+    rawPath: string; original: string; result: string; bom: string; ending: "\r\n" | "\n";
+    noop: boolean; firstLine?: number; lastLine?: number;
+    warnings?: string[]; noopEdits?: Array<{ editIndex: number; loc: string; currentContent: string }>;
+  }> = [];
+
+  for (const [, { rawPath, edits }] of groups) {
+    throwIfAborted(signal);
+    const absPath = resolveToCwd(rawPath, ctx.cwd);
+    try { await fsAccess(absPath, constants.R_OK | constants.W_OK); } catch (e: unknown) {
+      const code = (e as NodeJS.ErrnoException).code;
+      throw new Error(code === "ENOENT" ? `File not found: ${rawPath}` : `Cannot access: ${rawPath}`);
+    }
+    const file = await loadFileKindAndText(absPath);
+    if (file.kind !== "text") throw new Error(`Not a text file: ${rawPath}`);
+    const { bom, text: content } = stripBom(file.text);
+    const ending = detectLineEnding(content);
+    const original = normalizeToLF(content);
+    const resolved = resolveEditAnchors(edits);
+    const applied = applyHashlineEdits(original, resolved, signal);
+    pre.push({
+      rawPath, original, result: applied.content, bom, ending,
+      noop: original === applied.content,
+      firstLine: applied.firstChangedLine, lastLine: applied.lastChangedLine,
+      warnings: applied.warnings, noopEdits: applied.noopEdits,
+    });
+  }
+
+  // Phase 2: WRITE non-noop
+  for (const pf of pre) {
+    if (pf.noop) continue;
+    throwIfAborted(signal);
+    const absPath = resolveToCwd(pf.rawPath, ctx.cwd);
+    const mtp = await resolveMutationTargetPath(absPath);
+    await withFileMutationQueue(mtp, () =>
+      writeFileAtomically(absPath, pf.bom + restoreLineEndings(pf.result, pf.ending))
+    );
+  }
+
+  // Phase 3: BUILD response
+  const allNoop = pre.every(p => p.noop);
+  const combinedWarnings = pre.flatMap(p => p.warnings ?? []);
+  const combinedNoops = pre.flatMap(p => p.noopEdits ?? []);
+  const totalEdits = toolEdits.length;
+
+  if (allNoop) {
+    const filesList = pre.map(p => p.rawPath).join(", ");
+    const detail = combinedNoops.length > 0
+      ? combinedNoops.map(e => `Edit ${e.editIndex} (${e.loc}): already matches`).join("\n")
+      : "All edits produced identical content.";
+    return {
+      content: [{ type: "text", text: `No changes made across ${pre.length} file(s): ${filesList}\n${detail}` }],
+      details: {
+        diff: "", classification: "noop",
+        files: Object.fromEntries(pre.map(p => [p.rawPath, { noop: true }])),
+        metrics: { edits_attempted: totalEdits, edits_noop: combinedNoops.length, warnings: combinedWarnings.length, return_mode: returnMode, classification: "noop" },
+      },
+    };
+  }
+
+  // Build per-file anchor blocks
+  const blocks: string[] = [];
+  const fileDetails: Record<string, any> = {};
+  for (const pf of pre) {
+    if (pf.noop) continue;
+    const diffResult = generateDiffString(pf.original, pf.result);
+    const lines = getVisibleLines(pf.result);
+    const range = computeAffectedLineRange({
+      firstChangedLine: pf.firstLine, lastChangedLine: pf.lastLine, resultLineCount: lines.length,
+    });
+    fileDetails[pf.rawPath] = { diff: diffResult.diff, firstChangedLine: pf.firstLine, lastChangedLine: pf.lastLine };
+
+    if (range) {
+      const region = lines.slice(range.start - 1, range.end);
+      const formatted = formatHashlineRegion(region, range.start);
+      const safePath = JSON.stringify(pf.rawPath);
+      blocks.push(`--- Anchors path=${safePath} lines=${range.start}-${range.end} ---\n${formatted}`);
+    } else if (lines.length === 0) {
+      blocks.push(`File ${JSON.stringify(pf.rawPath)} is now empty.`);
+    } else {
+      blocks.push(`Anchors for ${JSON.stringify(pf.rawPath)} omitted (changed region too large); use read.`);
+    }
+  }
+
+  const warnBlock = combinedWarnings.length ? `\n\nWarnings:\n${combinedWarnings.join("\n")}` : "";
+  return {
+    content: [{ type: "text", text: blocks.join("\n\n") + warnBlock }],
+    details: {
+      diff: Object.values(fileDetails).map((d: any) => d.diff).filter(Boolean).join("\n"),
+      files: fileDetails,
+      firstChangedLine: pre.find(p => !p.noop)?.firstLine,
+      metrics: { edits_attempted: totalEdits, edits_noop: combinedNoops.length, warnings: combinedWarnings.length, return_mode: returnMode, classification: "applied" },
+    },
+  };
+}
+
 type EditToolDefinition = ToolDefinition<
   typeof hashlineEditToolSchema,
   HashlineEditToolDetails,
@@ -942,6 +1139,18 @@ const editToolDefinition: EditToolDefinition = {
         isError: true,
         details: { diff: "", firstChangedLine: undefined },
       };
+    }
+
+    // Multi-file: if any edit has its own path, dispatch to executeMultiFile
+    if (toolEdits.some((e) => e.path !== undefined && e.path !== path)) {
+      return executeMultiFile(
+        path,
+        toolEdits,
+        returnMode as ReturnMode,
+        requestedReturnRanges,
+        signal,
+        ctx,
+      );
     }
 
     const mutationTargetPath = await resolveMutationTargetPath(absolutePath);
